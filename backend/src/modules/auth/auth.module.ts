@@ -6,6 +6,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { TokenService } from './token.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RefreshTokenStrategy } from './strategies/refresh-token.strategy';
 import { User } from '../user/entities/user.entity';
@@ -34,7 +35,7 @@ import { EmailModule } from '../email/email.module';
     EmailModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, RefreshTokenStrategy],
-  exports: [AuthService],
+  providers: [AuthService, TokenService, JwtStrategy, RefreshTokenStrategy],
+  exports: [AuthService, TokenService],
 })
 export class AuthModule {}

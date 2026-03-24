@@ -13,10 +13,14 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { TokenService } from './token.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private tokenService: TokenService,
+  ) { }
 
   @Public()
   @Post('register')
@@ -105,5 +109,15 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
+  }
+
+  @Post('revoke-email-change')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async revokeEmailChange(@CurrentUser() user: any) {
+    await this.tokenService.revokeEmailChangeRequests(user.id);
+    return {
+      message: 'All pending email change requests have been cancelled. Your account is secure.',
+    };
   }
 }

@@ -1,13 +1,12 @@
-import { Injectable, UnauthorizedException, ConflictException, BadRequestException, Logger } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, BadRequestException, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan, MoreThan, IsNull } from 'typeorm';
+import { Repository, IsNull, LessThan } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as ms from 'ms';
 
 import { User } from '../user/entities/user.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
-import { UserToken} from './entities/user-token.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
@@ -18,8 +17,9 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ConfigService } from '@nestjs/config';
 import { Role } from '../user/entities/role.entity';
-import { EmailService } from '../email/email.service';
+import { TokenService } from './token.service';
 import { TokenType } from 'src/common/constants/token-type.enum';
+import { EmailService } from '../email/email.service';
 
 @Injectable()
 export class AuthService {
@@ -30,12 +30,11 @@ export class AuthService {
     private userRepository: Repository<User>,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
-    @InjectRepository(UserToken)
-    private userTokenRepository: Repository<UserToken>,
     @InjectRepository(Role)
     private roleRepository: Repository<Role>,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private tokenService: TokenService,
     private emailService: EmailService,
   ) { }
 
@@ -46,7 +45,27 @@ export class AuthService {
 
     if (existingUser) {
       if (!existingUser.isEmailVerified) {
-        await this.generateAndSendActivationToken(existingUser, requestInfo);
+        // Generate activation token
+        const token = await this.tokenService.generateOrUpdateToken({
+          userId: existingUser.id,
+          type: TokenType.ACTIVATION,
+          metadata: {
+            generatedAt: new Date().toISOString(),
+            ip: requestInfo?.ip,
+            userAgent: requestInfo?.userAgent,
+          },
+          sendEmail: true,
+          emailRecipient: existingUser.email,
+          emailContext: { fullName: existingUser.fullName },
+        });
+
+        if (!token) {
+          throw new HttpException(
+            'Failed to send verification email. Please try again later.',
+            HttpStatus.INTERNAL_SERVER_ERROR,
+          );
+        }
+
         return {
           message: 'Please check your email to verify your account.',
           email: existingUser.email,
@@ -77,14 +96,31 @@ export class AuthService {
 
     await this.userRepository.save(user);
 
-    await this.generateAndSendActivationToken(user, requestInfo);
+    // Generate activation token
+    const token = await this.tokenService.generateOrUpdateToken({
+      userId: user.id,
+      type: TokenType.ACTIVATION,
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        ip: requestInfo?.ip,
+        userAgent: requestInfo?.userAgent,
+      },
+      sendEmail: true,
+      emailRecipient: user.email,
+      emailContext: { fullName: user.fullName },
+    });
 
-    this.logger.log(`User registered: ${user.email}, awaiting verification`);
+    if (!token) {
+      this.logger.warn(`User registered but email failed: ${user.email}`);
+    }
 
     return {
-      message: 'Registration successful. Please check your email for verification code.',
+      message: token
+        ? 'Registration successful. Please check your email for verification code.'
+        : 'Registration successful but we could not send verification email. Please use resend verification endpoint.',
       email: user.email,
       requiresVerification: true,
+      emailSent: !!token,
     };
   }
 
@@ -101,53 +137,33 @@ export class AuthService {
       throw new BadRequestException('Email already verified');
     }
 
-    const validToken = await this.userTokenRepository.findOne({
-      where: {
-        userId: user.id,
-        token: verifyEmailDto.token,
-        type: TokenType.ACTIVATION,
-        usedAt: IsNull(),
-        expiresAt: MoreThan(new Date()),
-      },
-    });
+    // Validate token
+    const validation = await this.tokenService.validateToken(
+      user.id,
+      verifyEmailDto.token,
+      TokenType.ACTIVATION,
+      true, // mark as used
+    );
 
-    if (!validToken) {
-      const expiredToken = await this.userTokenRepository.findOne({
-        where: {
-          userId: user.id,
-          token: verifyEmailDto.token,
-          type: TokenType.ACTIVATION,
-          usedAt: IsNull(),
-          expiresAt: LessThan(new Date()),
-        },
-      });
-
-      if (expiredToken) {
-        throw new BadRequestException('Verification token has expired. Please request a new one.');
-      }
-
-      throw new BadRequestException('Invalid verification token');
+    if (!validation.isValid) {
+      throw new BadRequestException(validation.error === 'Token has expired'
+        ? 'Verification token has expired. Please request a new one.'
+        : 'Invalid verification token');
     }
 
-    validToken.usedAt = new Date();
-    await this.userTokenRepository.save(validToken);
-
+    // Activate user
     user.isEmailVerified = true;
     user.isActive = true;
     await this.userRepository.save(user);
 
-    await this.userTokenRepository.update(
-      {
-        userId: user.id,
-        type: TokenType.ACTIVATION,
-        usedAt: IsNull(),
-      },
-      {
-        usedAt: new Date(),
-      }
-    );
+    // Invalidate all other activation tokens
+    await this.tokenService.invalidateTokens(user.id, TokenType.ACTIVATION);
 
-    await this.emailService.sendWelcomeEmail(user.email, user.fullName);
+    // Send welcome email (don't block if fails)
+    await this.tokenService['emailService'].sendWelcomeEmail(user.email, user.fullName)
+      .catch(error => {
+        this.logger.error(`Failed to send welcome email to ${user.email}:`, error);
+      });
 
     this.logger.log(`User verified: ${user.email}`);
 
@@ -169,13 +185,280 @@ export class AuthService {
       throw new BadRequestException('Email already verified');
     }
 
-    await this.generateAndSendActivationToken(user, requestInfo);
+    const token = await this.tokenService.generateOrUpdateToken({
+      userId: user.id,
+      type: TokenType.ACTIVATION,
+      metadata: {
+        generatedAt: new Date().toISOString(),
+        ip: requestInfo?.ip,
+        userAgent: requestInfo?.userAgent,
+      },
+      sendEmail: true,
+      emailRecipient: user.email,
+      emailContext: { fullName: user.fullName },
+    });
+
+    if (!token) {
+      throw new HttpException(
+        'Failed to send verification email. Please try again later.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
 
     return {
       message: 'Verification code has been resent to your email.',
     };
   }
 
+  async changeEmail(userId: number, changeEmailDto: ChangeEmailDto, requestInfo: any) {
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(changeEmailDto.password, user.password);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Invalid password');
+    }
+
+    // Check if new email already exists
+    const existingUser = await this.userRepository.findOne({
+      where: { email: changeEmailDto.newEmail },
+    });
+
+    if (existingUser) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // Check if new email is the same as current
+    if (user.email === changeEmailDto.newEmail) {
+      throw new BadRequestException('New email must be different from current email');
+    }
+
+    // ========== PHASE 1: SEND ALERT AND OTP ==========
+
+    const alertSent = await this.emailService.sendEmailChangeAlert(
+      user.email,
+      changeEmailDto.newEmail,
+      user.fullName,
+    );
+
+    if (!alertSent) {
+      this.logger.warn(`Failed to send email change alert to ${user.email}`);
+    }
+
+    const token = await this.tokenService.generateOrUpdateToken({
+      userId: user.id,
+      type: TokenType.EMAIL_CHANGE,
+      expiryMinutes: this.configService.get('VERIFICATION_TOKEN_EXPIRY', 15),
+      metadata: {
+        newEmail: changeEmailDto.newEmail,
+        oldEmail: user.email,
+        requestedAt: new Date().toISOString(),
+        ip: requestInfo?.ip,
+        userAgent: requestInfo?.userAgent,
+      },
+      sendEmail: false,
+    });
+
+    if (!token) {
+      throw new HttpException(
+        'Failed to generate verification code. Please try again later.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    // Send OTP email to new address
+    const otpSent = await this.emailService.sendEmailChangeOTP(
+      changeEmailDto.newEmail,
+      token,
+      user.fullName,
+    );
+
+    if (!otpSent) {
+      throw new HttpException(
+        'Failed to send verification email to new address. Please try again later.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    this.logger.log(
+      `Email change requested for user ${user.id}: ${user.email} -> ${changeEmailDto.newEmail}`
+    );
+
+    return {
+      message: 'A verification code has been sent to your new email address. ' +
+        'A security alert has also been sent to your current email. ' +
+        'Please check both emails and enter the code to complete the email change.',
+      newEmail: changeEmailDto.newEmail,
+      oldEmail: user.email,
+      alertSent: alertSent,
+      otpSent: otpSent,
+    };
+  }
+
+  async confirmEmailChange(confirmEmailChangeDto: ConfirmEmailChangeDto) {
+    // ========== PHASE 2: CONFIRM OTP ==========
+
+    // Find and consume token
+    const userToken = await this.tokenService.consumeTokenByValue(
+      confirmEmailChangeDto.token,
+      TokenType.EMAIL_CHANGE,
+    );
+
+    if (!userToken) {
+      // Check if token exists but expired
+      const expiredToken = await this.tokenService.findExpiredTokenByValue(
+        confirmEmailChangeDto.token,
+        TokenType.EMAIL_CHANGE,
+      );
+
+      if (expiredToken) {
+        throw new BadRequestException('Verification token has expired. Please request a new one.');
+      }
+
+      throw new BadRequestException('Invalid verification token');
+    }
+
+    const metadata = JSON.parse(userToken.metadata || '{}');
+    const newEmail = metadata.newEmail;
+    const oldEmail = metadata.oldEmail || userToken.user.email;
+
+    if (!newEmail || newEmail !== confirmEmailChangeDto.newEmail) {
+      throw new BadRequestException('Email mismatch');
+    }
+
+    // Check if new email already exists (double-check)
+    const existingUser = await this.userRepository.findOne({
+      where: { email: newEmail },
+    });
+
+    if (existingUser && existingUser.id !== userToken.userId) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // ========== PHASE 3: UPDATE DATABASE AND FORCE LOGOUT ==========
+
+    const oldUserEmail = userToken.user.email;
+
+    // Update user email
+    userToken.user.email = newEmail;
+    await this.userRepository.save(userToken.user);
+
+    // IMPORTANT: Force logout all sessions - delete all refresh tokens
+    const deletedRefreshTokens = await this.refreshTokenRepository.delete({
+      userId: userToken.user.id
+    });
+
+    this.logger.log(
+      `✅ Email changed for user ${userToken.user.id}: ${oldUserEmail} -> ${newEmail}. ` +
+      `Invalidated ${deletedRefreshTokens.affected || 0} refresh tokens.`
+    );
+
+    // ========== PHASE 4: SEND COMPLETION NOTIFICATIONS ==========
+
+    await this.emailService.sendEmailChangeCompletion(
+      oldEmail,
+      newEmail,
+      userToken.user.fullName,
+    );
+
+    return {
+      message: '✅ Email changed successfully! All your sessions have been terminated for security. ' +
+        'Please log in with your new email address. ' +
+        'A confirmation email has been sent to both your old and new email addresses.',
+      requiresRelogin: true,
+      newEmail: newEmail,
+    };
+  }
+
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto, requestInfo: any) {
+    const user = await this.userRepository.findOne({
+      where: { email: forgotPasswordDto.email },
+    });
+
+    if (!user) {
+      return {
+        message: 'If your email is registered, you will receive a password reset link.',
+      };
+    }
+
+    if (!user.isEmailVerified) {
+      throw new BadRequestException('Please verify your email first');
+    }
+
+    const token = await this.tokenService.generateOrUpdateToken({
+      userId: user.id,
+      type: TokenType.PASSWORD_RESET,
+      metadata: {
+        requestedAt: new Date().toISOString(),
+        ip: requestInfo?.ip,
+        userAgent: requestInfo?.userAgent,
+        location: requestInfo?.location || 'Unknown location',
+      },
+      sendEmail: true,
+      emailRecipient: user.email,
+      emailContext: {
+        fullName: user.fullName,
+        deviceInfo: requestInfo?.userAgent,
+        location: requestInfo?.location,
+      },
+    });
+
+    if (!token) {
+      throw new HttpException(
+        'Failed to send password reset email. Please try again later.',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    return {
+      message: 'If your email is registered, you will receive a password reset link.',
+    };
+  }
+
+  async resetPassword(resetPasswordDto: ResetPasswordDto) {
+    // Use TokenService to find and consume token
+    const userToken = await this.tokenService.consumeTokenByValue(
+      resetPasswordDto.token,
+      TokenType.PASSWORD_RESET,
+    );
+
+    if (!userToken) {
+      // Check if token exists but expired
+      const expiredToken = await this.tokenService['userTokenRepository'].findOne({
+        where: {
+          token: resetPasswordDto.token,
+          type: TokenType.PASSWORD_RESET,
+          usedAt: IsNull(),
+          expiresAt: LessThan(new Date()),
+        },
+        relations: ['user'],
+      });
+
+      if (expiredToken) {
+        throw new BadRequestException('Reset token has expired. Please request a new one.');
+      }
+
+      throw new BadRequestException('Invalid reset token');
+    }
+
+    const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
+
+    userToken.user.password = hashedPassword;
+    await this.userRepository.save(userToken.user);
+
+    // Invalidate all refresh tokens for security
+    await this.refreshTokenRepository.delete({ userId: userToken.user.id });
+
+    return {
+      message: 'Password reset successfully. Please log in with your new password.',
+    };
+  }
   async login(loginDto: LoginDto) {
     const user = await this.userRepository.findOne({
       where: { email: loginDto.email },
@@ -254,250 +537,6 @@ export class AuthService {
     return { message: 'Logged out successfully' };
   }
 
-  async changeEmail(userId: number, changeEmailDto: ChangeEmailDto, requestInfo: any) {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-    });
-
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    const isPasswordValid = await bcrypt.compare(changeEmailDto.password, user.password);
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid password');
-    }
-
-    const existingUser = await this.userRepository.findOne({
-      where: { email: changeEmailDto.newEmail },
-    });
-
-    if (existingUser) {
-      throw new ConflictException('Email already in use');
-    }
-
-    await this.userTokenRepository.update(
-      {
-        userId: user.id,
-        type: TokenType.EMAIL_CHANGE,
-        usedAt: IsNull(),
-      },
-      {
-        usedAt: new Date(),
-      }
-    );
-
-    const token = Math.floor(100000 + Math.random() * 900000).toString();
-    const tokenExpiryMinutes = this.configService.get('VERIFICATION_TOKEN_EXPIRY', 15);
-    const expiresAt = new Date(Date.now() + tokenExpiryMinutes * 60 * 1000);
-
-    const userToken = this.userTokenRepository.create({
-      userId: user.id,
-      token: token,
-      type: TokenType.EMAIL_CHANGE,
-      expiresAt: expiresAt,
-      usedAt: null,
-      metadata: JSON.stringify({
-        newEmail: changeEmailDto.newEmail,
-        requestedAt: new Date().toISOString(),
-        ip: requestInfo.ip,
-        userAgent: requestInfo.userAgent,
-      }),
-    });
-
-    await this.userTokenRepository.save(userToken);
-
-    await this.emailService.sendVerificationOTP(
-      changeEmailDto.newEmail,
-      token,
-      user.fullName,
-    );
-
-    return {
-      message: 'Verification code sent to your new email address. Please verify to complete email change.',
-    };
-  }
-
-  async confirmEmailChange(confirmEmailChangeDto: ConfirmEmailChangeDto) {
-    const validToken = await this.userTokenRepository.findOne({
-      where: {
-        token: confirmEmailChangeDto.token,
-        type: TokenType.EMAIL_CHANGE,
-        usedAt: IsNull(),
-        expiresAt: MoreThan(new Date()),
-      },
-      relations: ['user'],
-    });
-
-    if (!validToken) {
-      throw new BadRequestException('Invalid or expired verification token');
-    }
-
-    const metadata = JSON.parse(validToken.metadata || '{}');
-    const newEmail = metadata.newEmail;
-
-    if (!newEmail || newEmail !== confirmEmailChangeDto.newEmail) {
-      throw new BadRequestException('Email mismatch');
-    }
-
-    const existingUser = await this.userRepository.findOne({
-      where: { email: newEmail },
-    });
-
-    if (existingUser && existingUser.id !== validToken.userId) {
-      throw new ConflictException('Email already in use');
-    }
-
-    const oldEmail = validToken.user.email;
-
-    validToken.user.email = newEmail;
-    await this.userRepository.save(validToken.user);
-
-    validToken.usedAt = new Date();
-    await this.userTokenRepository.save(validToken);
-
-    await this.emailService.sendEmailChangeNotification(
-      oldEmail,
-      newEmail,
-      validToken.user.fullName,
-    );
-
-    return {
-      message: 'Email changed successfully. Please log in with your new email.',
-    };
-  }
-
-  async forgotPassword(forgotPasswordDto: ForgotPasswordDto, requestInfo: any) {
-    const user = await this.userRepository.findOne({
-      where: { email: forgotPasswordDto.email },
-    });
-
-    if (!user) {
-      return {
-        message: 'If your email is registered, you will receive a password reset link.',
-      };
-    }
-
-    if (!user.isEmailVerified) {
-      throw new BadRequestException('Please verify your email first');
-    }
-
-    await this.userTokenRepository.update(
-      {
-        userId: user.id,
-        type: TokenType.PASSWORD_RESET,
-        usedAt: IsNull(),
-      },
-      {
-        usedAt: new Date(),
-      }
-    );
-
-    const token = Math.floor(100000 + Math.random() * 900000).toString();
-    const tokenExpiryMinutes = this.configService.get('VERIFICATION_TOKEN_EXPIRY', 15);
-    const expiresAt = new Date(Date.now() + tokenExpiryMinutes * 60 * 1000);
-
-    const userToken = this.userTokenRepository.create({
-      userId: user.id,
-      token: token,
-      type: TokenType.PASSWORD_RESET,
-      expiresAt: expiresAt,
-      usedAt: null,
-      metadata: JSON.stringify({
-        requestedAt: new Date().toISOString(),
-        ip: requestInfo.ip,
-        userAgent: requestInfo.userAgent,
-        location: requestInfo.location || 'Unknown location',
-      }),
-    });
-
-    await this.userTokenRepository.save(userToken);
-
-    await this.emailService.sendPasswordResetEmail(
-      user.email,
-      token,
-      user.fullName,
-      {
-        deviceInfo: requestInfo.userAgent,
-        location: requestInfo.location,
-      }
-    );
-
-    return {
-      message: 'If your email is registered, you will receive a password reset link.',
-    };
-  }
-
-  async resetPassword(resetPasswordDto: ResetPasswordDto) {
-    const validToken = await this.userTokenRepository.findOne({
-      where: {
-        token: resetPasswordDto.token,
-        type: TokenType.PASSWORD_RESET,
-        usedAt: IsNull(),
-        expiresAt: MoreThan(new Date()),
-      },
-      relations: ['user'],
-    });
-
-    if (!validToken) {
-      throw new BadRequestException('Invalid or expired reset token');
-    }
-
-    const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
-    
-    validToken.user.password = hashedPassword;
-    await this.userRepository.save(validToken.user);
-
-    validToken.usedAt = new Date();
-    await this.userTokenRepository.save(validToken);
-
-    await this.refreshTokenRepository.delete({ userId: validToken.user.id });
-
-    return {
-      message: 'Password reset successfully. Please log in with your new password.',
-    };
-  }
-
-  private async generateAndSendActivationToken(user: User, requestInfo?: any): Promise<void> {
-    await this.userTokenRepository.update(
-      {
-        userId: user.id,
-        type: TokenType.ACTIVATION,
-        usedAt: IsNull(),
-      },
-      {
-        usedAt: new Date(),
-      }
-    );
-
-    const token = Math.floor(100000 + Math.random() * 900000).toString();
-    const tokenExpiryMinutes = this.configService.get('VERIFICATION_TOKEN_EXPIRY', 15);
-    const expiresAt = new Date(Date.now() + tokenExpiryMinutes * 60 * 1000);
-
-    const userToken = this.userTokenRepository.create({
-      userId: user.id,
-      token: token,
-      type: TokenType.ACTIVATION,
-      expiresAt: expiresAt,
-      usedAt: null,
-      metadata: requestInfo ? JSON.stringify({
-        generatedAt: new Date().toISOString(),
-        ip: requestInfo.ip,
-        userAgent: requestInfo.userAgent,
-      }) : null,
-    });
-
-    await this.userTokenRepository.save(userToken);
-
-    await this.emailService.sendVerificationOTP(
-      user.email,
-      token,
-      user.fullName,
-    );
-
-    this.logger.log(`Activation token generated for: ${user.email}`);
-  }
-
   async generateTokens(user: User) {
     const payload = {
       sub: user.id,
@@ -530,26 +569,5 @@ export class AuthService {
       accessToken,
       refreshToken: refreshTokenString,
     };
-  }
-
-  async cleanupExpiredTokens() {
-    const expiredTokens = await this.userTokenRepository.find({
-      where: {
-        expiresAt: LessThan(new Date()),
-        usedAt: IsNull(),
-      },
-    });
-
-    for (const token of expiredTokens) {
-      token.usedAt = new Date();
-    }
-
-    await this.userTokenRepository.save(expiredTokens);
-
-    await this.refreshTokenRepository.delete({
-      expiresAt: LessThan(new Date()),
-    });
-
-    this.logger.log(`Cleaned up ${expiredTokens.length} expired tokens`);
   }
 }
