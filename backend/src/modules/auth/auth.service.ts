@@ -3,11 +3,14 @@ import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, LessThan } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import * as ms from 'ms';
 
 import { User } from '../user/entities/user.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ConfigService } from '@nestjs/config';
+import { Role } from '../user/entities/role.entity';
 
 @Injectable()
 export class AuthService {
@@ -16,10 +19,14 @@ export class AuthService {
     private userRepository: Repository<User>,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
+    @InjectRepository(Role)
+    private roleRepository: Repository<Role>,
     private jwtService: JwtService,
+    private configService: ConfigService,
   ) { }
 
   async register(registerDto: RegisterDto) {
+    // Check if user exists
     const existingUser = await this.userRepository.findOne({
       where: { email: registerDto.email },
     });
@@ -28,17 +35,27 @@ export class AuthService {
       throw new ConflictException('Email already exists');
     }
 
+    // Hash password
     const hashedPassword = await bcrypt.hash(registerDto.password, 10);
+
+    const studentRole = await this.roleRepository.findOne({
+      where: { name: 'STUDENT' },
+    });
+
+    if (!studentRole) {
+      throw new Error('STUDENT role not found in database');
+    }
 
     const user = this.userRepository.create({
       email: registerDto.email,
       password: hashedPassword,
       fullName: registerDto.fullName,
-      roleId: 1,
-    } as Partial<User>);
+      roleId: studentRole.id,
+    });
 
     await this.userRepository.save(user);
 
+    // Generate tokens
     const tokens = await this.generateTokens(user);
 
     return {
@@ -46,15 +63,19 @@ export class AuthService {
         id: user.id,
         email: user.email,
         fullName: user.fullName,
-        roleId: user.roleId,
+        role: studentRole.name,
       },
-      ...tokens,
+      tokens: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      },
     };
   }
 
   async login(loginDto: LoginDto) {
     const user = await this.userRepository.findOne({
       where: { email: loginDto.email },
+      relations: ['role'],
     });
 
     if (!user) {
@@ -78,9 +99,12 @@ export class AuthService {
         id: user.id,
         email: user.email,
         fullName: user.fullName,
-        roleId: user.roleId,
+        role: user.role?.name || 'STUDENT',
       },
-      ...tokens,
+      tokens: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      },
     };
   }
 
@@ -119,7 +143,6 @@ export class AuthService {
     } else {
       await this.refreshTokenRepository.delete({ userId });
     }
-
     return { message: 'Logged out successfully' };
   }
 
@@ -127,39 +150,35 @@ export class AuthService {
     const payload = {
       sub: user.id,
       email: user.email,
-      roleId: user.roleId
+      role: user.role?.name || 'STUDENT',
     };
 
-    // SỬA: Dùng số giây thay vì string '15m' để tránh lỗi type
-    const accessTokenExpiresIn = 60 * 15; // 15 phút = 900 giây
-    const refreshTokenExpiresIn = 60 * 60 * 24 * 7; // 7 ngày = 604800 giây
+    const refreshSecret = this.configService.get<string>('jwt.refreshSecret');
+    const refreshExpiresIn = this.configService.get<string>('jwt.refreshExpiresIn', '7d');
 
     const [accessToken, refreshTokenString] = await Promise.all([
+      this.jwtService.signAsync(payload),
       this.jwtService.signAsync(payload, {
-        expiresIn: accessTokenExpiresIn,
-      }),
-      this.jwtService.signAsync(payload, {
-        expiresIn: refreshTokenExpiresIn,
+        secret: refreshSecret,
+        expiresIn: refreshExpiresIn as any,
       }),
     ]);
 
-    // Tính ngày hết hạn
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7); // 7 ngày
+    await this.refreshTokenRepository.delete({ userId: user.id });
 
-    const refreshToken = this.refreshTokenRepository.create({
+    const expiresAt = new Date(Date.now() + (ms as any).default(refreshExpiresIn));
+
+    await this.refreshTokenRepository.save({
       userId: user.id,
       token: refreshTokenString,
       expiresAt,
     });
-    await this.refreshTokenRepository.save(refreshToken);
 
     return {
       accessToken,
-      refreshToken: refreshTokenString
+      refreshToken: refreshTokenString,
     };
   }
-
   async cleanupExpiredTokens() {
     await this.refreshTokenRepository.delete({
       expiresAt: LessThan(new Date()),

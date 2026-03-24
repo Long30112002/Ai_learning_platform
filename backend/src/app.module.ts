@@ -34,9 +34,12 @@ import { UserModule } from './modules/user/user.module';
             encrypt: false,
             trustServerCertificate: true,
           },
+          logging: true,
+          logger: 'advanced-console',
         };
       },
       inject: [ConfigService],
+
     }),
     AuthModule,
     UserModule,
@@ -57,4 +60,4 @@ import { UserModule } from './modules/user/user.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule { }

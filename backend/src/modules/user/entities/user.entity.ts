@@ -17,10 +17,10 @@ export class User extends BaseEntity {
   @Column({ name: 'role_id', type: 'int' })
   roleId: number;
 
-  @Column({ name: 'is_active', type: 'bit', default: true })  // THÊM DÒNG NÀY
+  @Column({ name: 'is_active', type: 'bit', default: true })  
   isActive: boolean;
 
-  @ManyToOne(() => Role)
+  @ManyToOne(() => Role, { eager: true })  
   @JoinColumn({ name: 'role_id' })
   role: Role;
 

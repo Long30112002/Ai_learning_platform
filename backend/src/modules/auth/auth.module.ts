@@ -7,24 +7,28 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
-import { User } from '../user/entities/user.entity';
-import { RefreshToken } from './entities/refresh-token.entity';
 import { RefreshTokenStrategy } from './strategies/refresh-token.strategy';
+import { User } from '../user/entities/user.entity';
+import { Role } from '../user/entities/role.entity';  
+import { RefreshToken } from './entities/refresh-token.entity';
 
 @Module({
   imports: [
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET'),
-        signOptions: { 
-          expiresIn: configService.get('JWT_EXPIRES_IN', '15m') 
-        },
-      }),
+      useFactory: async (configService: ConfigService) => {
+        const jwtConfig = configService.get('jwt');
+        return {
+          secret: jwtConfig.secret,
+          signOptions: { 
+            expiresIn: jwtConfig.expiresIn,
+          },
+        };
+      },
       inject: [ConfigService],
     }),
-    TypeOrmModule.forFeature([User, RefreshToken]),
+    TypeOrmModule.forFeature([User, RefreshToken, Role]),  
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, RefreshTokenStrategy],
