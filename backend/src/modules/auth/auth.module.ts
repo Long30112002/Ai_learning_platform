@@ -9,8 +9,10 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RefreshTokenStrategy } from './strategies/refresh-token.strategy';
 import { User } from '../user/entities/user.entity';
-import { Role } from '../user/entities/role.entity';  
+import { Role } from '../user/entities/role.entity';
 import { RefreshToken } from './entities/refresh-token.entity';
+import { UserToken } from './entities/user-token.entity';
+import { EmailModule } from '../email/email.module';
 
 @Module({
   imports: [
@@ -28,7 +30,8 @@ import { RefreshToken } from './entities/refresh-token.entity';
       },
       inject: [ConfigService],
     }),
-    TypeOrmModule.forFeature([User, RefreshToken, Role]),  
+    TypeOrmModule.forFeature([User, RefreshToken, Role, UserToken]),
+    EmailModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, RefreshTokenStrategy],

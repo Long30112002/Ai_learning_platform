@@ -1,8 +1,15 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ChangeEmailDto } from './dto/change-email.dto';
+import { ConfirmEmailChangeDto } from './dto/confirm-email-change.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -13,8 +20,28 @@ export class AuthController {
 
   @Public()
   @Post('register')
-  async register(@Body() registerDto: RegisterDto) {
-    return this.authService.register(registerDto);
+  async register(@Body() registerDto: RegisterDto, @Req() req: Request) {
+    return this.authService.register(registerDto, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  }
+
+  @Public()
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(@Body() verifyEmailDto: VerifyEmailDto) {
+    return this.authService.verifyEmail(verifyEmailDto);
+  }
+
+  @Public()
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  async resendVerification(@Body() resendVerificationDto: ResendVerificationDto, @Req() req: Request) {
+    return this.authService.resendVerification(resendVerificationDto, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
   }
 
   @Public()
@@ -39,5 +66,44 @@ export class AuthController {
     @Body('refreshToken') refreshToken?: string,
   ) {
     return this.authService.logout(user.id, refreshToken);
+  }
+
+  @Post('change-email')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changeEmail(
+    @CurrentUser() user: any,
+    @Body() changeEmailDto: ChangeEmailDto,
+    @Req() req: Request,
+  ) {
+    return this.authService.changeEmail(user.id, changeEmailDto, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  }
+
+  @Public()
+  @Post('confirm-email-change')
+  @HttpCode(HttpStatus.OK)
+  async confirmEmailChange(@Body() confirmEmailChangeDto: ConfirmEmailChangeDto) {
+    return this.authService.confirmEmailChange(confirmEmailChangeDto);
+  }
+
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto, @Req() req: Request) {
+    return this.authService.forgotPassword(forgotPasswordDto, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+      location: req.headers['cf-ipcountry'] || 'Unknown',
+    });
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetPasswordDto);
   }
 }

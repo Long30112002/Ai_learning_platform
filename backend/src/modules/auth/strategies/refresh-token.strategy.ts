@@ -17,7 +17,7 @@ export class RefreshTokenStrategy extends PassportStrategy(Strategy, 'jwt-refres
       ignoreExpiration: false,
       secretOrKey: refreshSecret,
       passReqToCallback: true,
-    } as any); // Dùng as any để tạm thời bypass type checking
+    } as any);
   }
 
   async validate(req: Request, payload: any) {

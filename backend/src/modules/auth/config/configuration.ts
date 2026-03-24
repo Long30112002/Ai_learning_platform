@@ -1,5 +1,4 @@
 export default () => {
-  // Database required fields
   const dbUser = process.env.DB_USER;
   const dbPass = process.env.DB_PASS;
   const dbName = process.env.DB_NAME;
@@ -10,7 +9,6 @@ export default () => {
     );
   }
 
-  // JWT required fields
   const jwtSecret = process.env.JWT_SECRET;
   const jwtRefreshSecret = process.env.JWT_REFRESH_SECRET;
 

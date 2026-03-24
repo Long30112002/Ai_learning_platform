@@ -1,0 +1,6 @@
+export enum TokenType {
+  ACTIVATION = 'ACTIVATION',
+  PASSWORD_RESET = 'PASSWORD_RESET',
+  EMAIL_CHANGE = 'EMAIL_CHANGE',
+  TWO_FA = 'TWO_FA',
+}

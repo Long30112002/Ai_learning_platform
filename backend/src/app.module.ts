@@ -3,13 +3,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR, APP_GUARD } from '@nestjs/core';
 
-import configuration from './config/configuration';
+import configuration from './modules/auth/config/configuration';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { UserModule } from './modules/user/user.module';
+import { EmailModule } from './modules/email/email.module';
 
 @Module({
   imports: [
@@ -39,10 +40,10 @@ import { UserModule } from './modules/user/user.module';
         };
       },
       inject: [ConfigService],
-
     }),
     AuthModule,
     UserModule,
+    EmailModule,
   ],
   controllers: [],
   providers: [
@@ -60,4 +61,4 @@ import { UserModule } from './modules/user/user.module';
     },
   ],
 })
-export class AppModule { }
+export class AppModule {}

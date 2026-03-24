@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .otp-code { 
+      font-size: 32px; 
+      font-weight: bold; 
+      letter-spacing: 5px;
+      text-align: center;
+      padding: 20px;
+      background-color: #f4f4f4;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .footer { font-size: 12px; color: #777; margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>Email Verification Code</h2>
+    <p>Hi {{name}},</p>
+    <p>Your verification code is:</p>
+    <div class="otp-code">{{otp}}</div>
+    <p>This code will expire in {{expiryMinutes}} minutes.</p>
+    <p>If you didn't create an account, please ignore this email.</p>
+    <div class="footer">
+      <p>Best regards,<br>{{appName}} Team</p>
+    </div>
+  </div>
+</body>
+</html>
