@@ -1,0 +1,76 @@
+C:\USERS\TUANL\ONEDRIVE\MÁY TÍNH\KYNANG\AI_LEARNING_PLATFORM\BACKEND\SRC\
+│
+├── main.ts                                    # Khởi động ứng dụng
+├── app.module.ts                              # Root module
+│
+├── common/                                    # TÁI SỬ DỤNG TOÀN CỤC
+│   │
+│   ├── base/                                  # BASE CLASSES (KHÔNG DUPLICATE CODE)
+│   │   ├── base.controller.ts                 # Base CRUD controller
+│   │   ├── base.service.ts                    # Base CRUD service (quan trọng nhất)
+│   │   ├── base.entity.ts                     # Base entity (createdAt, updatedAt)
+│   │   └── base.dto.ts                        # Base DTO (pagination)
+│   │
+│   ├── decorators/                            # CUSTOM DECORATORS
+│   │   ├── public.decorator.ts                # @Public() - Bỏ qua JWT
+│   │   ├── roles.decorator.ts                 # @Roles('ADMIN') - Phân quyền
+│   │   └── current-user.decorator.ts          # @CurrentUser() - Lấy user từ token
+│   │
+│   ├── filters/                               # ERROR HANDLING (1 NƠI DUY NHẤT)
+│   │   └── global-exception.filter.ts         # Bắt toàn bộ lỗi, format chuẩn
+│   │
+│   ├── guards/                                # AUTHENTICATION GUARDS
+│   │   ├── jwt-auth.guard.ts                  # JWT guard (mặc định)
+│   │   └── roles.guard.ts                     # Role-based guard
+│   │
+│   ├── interceptors/                          # RESPONSE FORMATTING
+│   │   └── transform.interceptor.ts           # Format response chuẩn {success, data, message}
+│   │
+│   ├── interfaces/                            # TYPE DEFINITIONS
+│   │   ├── api-response.interface.ts          # Interface response chuẩn
+│   │   └── pagination.interface.ts            # Interface phân trang
+│   │
+│   ├── pipes/                                 # VALIDATION PIPES
+│   │   └── validation.pipe.ts                 # Custom validation
+│   │
+│   └── constants/                             # CONSTANTS (KHÔNG HARDCODE)
+│       ├── roles.enum.ts                      # Role enum: STUDENT, INSTRUCTOR, ADMIN
+│       ├── status.enum.ts                     # Status enum: ACTIVE, INACTIVE, PENDING
+│       └── error-messages.const.ts            # Error messages tập trung
+│
+├── config/                                    # CẤU HÌNH TẬP TRUNG
+│   ├── configuration.ts                       # Load tất cả config từ .env
+│   ├── database.config.ts                     # Database configuration
+│   └── jwt.config.ts                          # JWT configuration
+│
+└── modules/                                   # BUSINESS MODULES (MỖI MODULE ĐỘC LẬP)
+    │
+    ├── auth/                                  # AUTH MODULE
+    │   ├── auth.module.ts                     # Module definition
+    │   ├── auth.controller.ts                 # API endpoints
+    │   ├── auth.service.ts                    # Business logic
+    │   ├── entities/
+    │   │   ├── refresh-token.entity.ts
+    │   ├── strategies/                        # Authentication strategies
+    │   │   ├── jwt.strategy.ts                # JWT strategy
+    │   │   └── refresh-token.strategy.ts      # Refresh token strategy
+    │   ├── dto/                               # Data Transfer Objects
+    │   │   ├── register.dto.ts                # Register payload
+    │   │   ├── login.dto.ts                   # Login payload
+    │   │   └── refresh-token.dto.ts           # Refresh token payload
+    │   └── interfaces/                        # Module interfaces
+    │       └── auth.interface.ts              # Auth interfaces
+    │
+    └── user/                                  # 👤 USER MODULE
+        ├── user.module.ts                     # Module definition
+        ├── user.controller.ts                 # API endpoints
+        ├── user.service.ts                    # Business logic (extends BaseService)
+        ├── entities/                          # Database entities
+        │   └── user.entity.ts                 # User entity (maps to DB table)
+        │   └── role.entity.ts
+        ├── dto/                               # Data Transfer Objects
+        │   ├── create-user.dto.ts             # Create user payload
+        │   ├── update-user.dto.ts             # Update user payload
+        │   └── user-response.dto.ts           # User response format
+        └── repositories/                      # Custom repositories (nếu cần)
+            └── user.repository.ts             # Custom queries
