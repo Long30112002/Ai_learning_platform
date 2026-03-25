@@ -9,3 +9,9 @@ export const RoleNames = {
     [Role.INSTRUCTOR]: 'INSTRUCTOR',
     [Role.ADMIN]: 'ADMIN',
 };
+
+export const RoleHierarchy: Record<Role, Role[]> = {
+  [Role.STUDENT]: [Role.STUDENT],
+  [Role.INSTRUCTOR]: [Role.INSTRUCTOR, Role.STUDENT],
+  [Role.ADMIN]: [Role.ADMIN, Role.INSTRUCTOR, Role.STUDENT],
+};

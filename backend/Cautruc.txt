@@ -1,76 +1,60 @@
-C:\USERS\TUANL\ONEDRIVE\MÁY TÍNH\KYNANG\AI_LEARNING_PLATFORM\BACKEND\SRC\
 │
-├── main.ts                                    # Khởi động ứng dụng
-├── app.module.ts                              # Root module
+├── main.ts # Khởi động ứng dụng, cấu hình Global NestJS (Pipes, Filters, CORS)
+├── app.module.ts # Module gốc, nơi kết nối và quản lý tất cả các module con
 │
-├── common/                                    # TÁI SỬ DỤNG TOÀN CỤC
+├── common/ # THƯ MỤC CHỨA CÁC THÀNH PHẦN DÙNG CHUNG (TÁI SỬ DỤNG)
+│   ├── base/ # CÁC LỚP CƠ SỞ (BASE CLASSES)
+│   │   ├── base.controller.ts                # Controller mẫu cho các thao tác CRUD cơ bản
+│   │   ├── base.dto.ts                       # DTO mẫu cho phân trang và các filter chung
+│   │   ├── base.entity.ts                    # Entity mẫu chứa các trường mặc định (id, createdAt, updatedAt)
+│   │   └── base.service.ts                   # Service mẫu chứa các logic xử lý Database dùng chung
 │   │
-│   ├── base/                                  # BASE CLASSES (KHÔNG DUPLICATE CODE)
-│   │   ├── base.controller.ts                 # Base CRUD controller
-│   │   ├── base.service.ts                    # Base CRUD service (quan trọng nhất)
-│   │   ├── base.entity.ts                     # Base entity (createdAt, updatedAt)
-│   │   └── base.dto.ts                        # Base DTO (pagination)
+│   ├── constants/ # ĐỊNH NGHĨA CÁC GIÁ TRỊ CỐ ĐỊNH (ENUMS & CONSTANTS)
+│   │   ├── error-messages.const.ts           # Quản lý tập trung các thông báo lỗi hệ thống
+│   │   ├── roles.enum.ts                     # Định nghĩa các quyền: ADMIN, INSTRUCTOR, STUDENT
+│   │   ├── status.enum.ts                    # Trạng thái người dùng: ACTIVE, INACTIVE, BANNED
+│   │   ├── token-type.enum.ts                # Các loại token: EMAIL_CHANGE, RESET_PASSWORD, VERIFY
+│   │   ├── user-access-level.enum.ts         # Cấp độ truy cập của người dùng
+│   │   └── user-log-action.enum.ts           # Các loại hành động để ghi nhật ký (Login, Logout, Update...)
 │   │
-│   ├── decorators/                            # CUSTOM DECORATORS
-│   │   ├── public.decorator.ts                # @Public() - Bỏ qua JWT
-│   │   ├── roles.decorator.ts                 # @Roles('ADMIN') - Phân quyền
-│   │   └── current-user.decorator.ts          # @CurrentUser() - Lấy user từ token
+│   ├── decorators/ # CÁC BỘ TRANG TRÍ TÙY CHỈNH (CUSTOM DECORATORS)
+│   │   ├── current-user.decorator.ts         # Lấy thông tin User hiện tại từ Request nhanh chóng
+│   │   ├── public.decorator.ts               # Đánh dấu API công khai (không cần kiểm tra JWT)
+│   │   └── roles.decorator.ts                # Chỉ định quyền cụ thể được phép truy cập API
 │   │
-│   ├── filters/                               # ERROR HANDLING (1 NƠI DUY NHẤT)
-│   │   └── global-exception.filter.ts         # Bắt toàn bộ lỗi, format chuẩn
+│   ├── filters/ # BỘ LỌC XỬ LÝ LỖI (EXCEPTION FILTERS)
+│   │   └── global-exception.filter.ts        # Bắt và định dạng lại tất cả lỗi trả về cho Client
 │   │
-│   ├── guards/                                # AUTHENTICATION GUARDS
-│   │   ├── jwt-auth.guard.ts                  # JWT guard (mặc định)
-│   │   └── roles.guard.ts                     # Role-based guard
+│   ├── guards/ # BỘ GÁC CỔNG BẢO MẬT (GUARDS)
+│   │   ├── jwt-auth.guard.ts                 # Bảo vệ API bằng cách kiểm tra Access Token (JWT)
+│   │   └── roles.guard.ts                    # Kiểm tra quyền hạn (Role) của người dùng
 │   │
-│   ├── interceptors/                          # RESPONSE FORMATTING
-│   │   └── transform.interceptor.ts           # Format response chuẩn {success, data, message}
-│   │
-│   ├── interfaces/                            # TYPE DEFINITIONS
-│   │   ├── api-response.interface.ts          # Interface response chuẩn
-│   │   └── pagination.interface.ts            # Interface phân trang
-│   │
-│   ├── pipes/                                 # VALIDATION PIPES
-│   │   └── validation.pipe.ts                 # Custom validation
-│   │
-│   └── constants/                             # CONSTANTS (KHÔNG HARDCODE)
-│       ├── roles.enum.ts                      # Role enum: STUDENT, INSTRUCTOR, ADMIN
-│       ├── status.enum.ts                     # Status enum: ACTIVE, INACTIVE, PENDING
-│       └── error-messages.const.ts            # Error messages tập trung
+│   └── interceptors/ # BỘ CHẶN VÀ XỬ LÝ DỮ LIỆU (INTERCEPTORS)
+│       ├── serialize.interceptor.ts          # Loại bỏ dữ liệu nhạy cảm (password) khỏi kết quả trả về
+│       └── transform.interceptor.ts          # Định dạng lại dữ liệu trả về theo chuẩn {success, data, message}
 │
-├── config/                                    # CẤU HÌNH TẬP TRUNG
-│   ├── configuration.ts                       # Load tất cả config từ .env
-│   ├── database.config.ts                     # Database configuration
-│   └── jwt.config.ts                          # JWT configuration
+└── modules/ # CÁC MODULE NGHIỆP VỤ CHÍNH (BUSINESS LOGIC)
 │
-└── modules/                                   # BUSINESS MODULES (MỖI MODULE ĐỘC LẬP)
-    │
-    ├── auth/                                  # AUTH MODULE
-    │   ├── auth.module.ts                     # Module definition
-    │   ├── auth.controller.ts                 # API endpoints
-    │   ├── auth.service.ts                    # Business logic
-    │   ├── entities/
-    │   │   ├── refresh-token.entity.ts
-    │   ├── strategies/                        # Authentication strategies
-    │   │   ├── jwt.strategy.ts                # JWT strategy
-    │   │   └── refresh-token.strategy.ts      # Refresh token strategy
-    │   ├── dto/                               # Data Transfer Objects
-    │   │   ├── register.dto.ts                # Register payload
-    │   │   ├── login.dto.ts                   # Login payload
-    │   │   └── refresh-token.dto.ts           # Refresh token payload
-    │   └── interfaces/                        # Module interfaces
-    │       └── auth.interface.ts              # Auth interfaces
-    │
-    └── user/                                  # 👤 USER MODULE
-        ├── user.module.ts                     # Module definition
-        ├── user.controller.ts                 # API endpoints
-        ├── user.service.ts                    # Business logic (extends BaseService)
-        ├── entities/                          # Database entities
-        │   └── user.entity.ts                 # User entity (maps to DB table)
-        │   └── role.entity.ts
-        ├── dto/                               # Data Transfer Objects
-        │   ├── create-user.dto.ts             # Create user payload
-        │   ├── update-user.dto.ts             # Update user payload
-        │   └── user-response.dto.ts           # User response format
-        └── repositories/                      # Custom repositories (nếu cần)
-            └── user.repository.ts             # Custom queries
+├── auth/ # MODULE XÁC THỰC & BẢO MẬT (AUTH)
+│   ├── auth.controller.ts                # Các Endpoint: Login, Register, Logout, Verify...
+│   ├── auth.module.ts                    # Khai báo các thành phần của module Auth
+│   ├── auth.service.ts                   # Logic xử lý đăng nhập, đăng ký và cấp phát JWT
+│   ├── security.service.ts # Xử lý bảo mật: Khóa tài khoản, thu hồi toàn bộ phiên đăng nhập
+│   ├── token.service.ts # Quản lý vòng đời UserToken (Email change, Reset password)
+│   ├── user-log.service.ts # Logic ghi lại lịch sử hoạt động của người dùng
+│   ├── config/ # Cấu hình môi trường riêng cho Auth (JWT Secret, Expires)
+│   ├── dto/ # Chứa các DTO kiểm tra dữ liệu đầu vào (Payload Validation)
+│   ├── entities/ # Định nghĩa các bảng: RefreshToken, UserLog, UserToken
+│   └── strategies/ # Cấu hình Passport: JwtStrategy, RefreshTokenStrategy
+│
+├── email/ # MODULE EMAIL (NOTIFICATIONS)
+│   ├── email.module.ts                   # Khai báo module Email
+│   ├── email.service.ts                  # Logic gửi mail thông qua Nodemailer/SMTP
+│   └── templates/ # Danh sách các mẫu giao diện Email (Welcome, Alerts, OTP...)
+│
+└── user/ # MODULE NGƯỜI DÙNG (USER)
+├── user.controller.ts                # Các Endpoint quản lý Profile và danh sách User
+├── user.module.ts                    # Khai báo module User
+├── user.service.ts                   # Logic truy vấn và xử lý dữ liệu người dùng trong DB
+├── dto/ # Chứa DTO tạo/cập nhật người dùng
+└── entities/ # Định nghĩa các bảng: User, Role, UserToken liên kết

@@ -38,9 +38,9 @@ export class AuthService {
     private refreshTokenRepository: Repository<RefreshToken>,
     @InjectRepository(Role)
     private roleRepository: Repository<Role>,
-    @InjectRepository(UserToken) 
-    private userTokenRepository: Repository<UserToken>, 
-    @InjectRepository(UserLog) 
+    @InjectRepository(UserToken)
+    private userTokenRepository: Repository<UserToken>,
+    @InjectRepository(UserLog)
     private userLogRepository: Repository<UserLog>,
     private jwtService: JwtService,
     private configService: ConfigService,
@@ -105,6 +105,7 @@ export class AuthService {
       roleId: studentRole.id,
       isActive: false,
       isEmailVerified: false,
+      accessLevel: UserAccessLevel.FULL,
     });
 
     await this.userRepository.save(user);

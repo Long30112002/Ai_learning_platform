@@ -46,8 +46,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       id: user.id,
       email: user.email,
-      role: user.role?.name || 'STUDENT',
+      roleId: user.roleId,
+      roleName: user.role?.name,
       fullName: user.fullName,
+      accessLevel: user.accessLevel,
     };
   }
 }
