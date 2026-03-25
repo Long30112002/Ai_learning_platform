@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, ConflictException, BadRequestException, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, LessThan } from 'typeorm';
+import { Repository, IsNull, LessThan, MoreThan } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as ms from 'ms';
 
@@ -20,6 +20,12 @@ import { Role } from '../user/entities/role.entity';
 import { TokenService } from './token.service';
 import { TokenType } from 'src/common/constants/token-type.enum';
 import { EmailService } from '../email/email.service';
+import { SecurityService } from './security.service';
+import { UserLogService } from './user-log.service';
+import { UserLogAction } from 'src/common/constants/user-log-action.enum';
+import { UserAccessLevel } from 'src/common/constants/user-access-level.enum';
+import { UserLog } from './entities/user-log.entity';
+import { UserToken } from './entities/user-token.entity';
 
 @Injectable()
 export class AuthService {
@@ -32,10 +38,17 @@ export class AuthService {
     private refreshTokenRepository: Repository<RefreshToken>,
     @InjectRepository(Role)
     private roleRepository: Repository<Role>,
+    @InjectRepository(UserToken) 
+    private userTokenRepository: Repository<UserToken>, 
+    @InjectRepository(UserLog) 
+    private userLogRepository: Repository<UserLog>,
     private jwtService: JwtService,
     private configService: ConfigService,
     private tokenService: TokenService,
     private emailService: EmailService,
+    private userLogService: UserLogService,
+    private securityService: SecurityService,
+
   ) { }
 
   async register(registerDto: RegisterDto, requestInfo?: any) {
@@ -211,120 +224,150 @@ export class AuthService {
   }
 
   async changeEmail(userId: number, changeEmailDto: ChangeEmailDto, requestInfo: any) {
-    const user = await this.userRepository.findOne({
-      where: { id: userId },
-    });
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new BadRequestException('User not found');
 
-    if (!user) {
-      throw new BadRequestException('User not found');
-    }
-
-    // Verify password
     const isPasswordValid = await bcrypt.compare(changeEmailDto.password, user.password);
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid password');
-    }
+    if (!isPasswordValid) throw new UnauthorizedException('Invalid password');
 
-    // Check if new email already exists
-    const existingUser = await this.userRepository.findOne({
-      where: { email: changeEmailDto.newEmail },
-    });
-
-    if (existingUser) {
-      throw new ConflictException('Email already in use');
-    }
-
-    // Check if new email is the same as current
-    if (user.email === changeEmailDto.newEmail) {
-      throw new BadRequestException('New email must be different from current email');
-    }
-
-    // ========== PHASE 1: SEND ALERT AND OTP ==========
-
-    const alertSent = await this.emailService.sendEmailChangeAlert(
-      user.email,
-      changeEmailDto.newEmail,
-      user.fullName,
-    );
-
-    if (!alertSent) {
-      this.logger.warn(`Failed to send email change alert to ${user.email}`);
-    }
+    const existingUser = await this.userRepository.findOne({ where: { email: changeEmailDto.newEmail } });
+    if (existingUser) throw new ConflictException('Email already in use');
+    if (user.email === changeEmailDto.newEmail) throw new BadRequestException('New email must be different');
 
     const token = await this.tokenService.generateOrUpdateToken({
       userId: user.id,
       type: TokenType.EMAIL_CHANGE,
-      expiryMinutes: this.configService.get('VERIFICATION_TOKEN_EXPIRY', 15),
+      expiryMinutes: 15,
       metadata: {
         newEmail: changeEmailDto.newEmail,
         oldEmail: user.email,
         requestedAt: new Date().toISOString(),
         ip: requestInfo?.ip,
         userAgent: requestInfo?.userAgent,
+        isApproved: false,
       },
       sendEmail: false,
     });
 
-    if (!token) {
-      throw new HttpException(
-        'Failed to generate verification code. Please try again later.',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
+    if (!token) throw new HttpException('Failed to generate code', HttpStatus.INTERNAL_SERVER_ERROR);
 
-    // Send OTP email to new address
-    const otpSent = await this.emailService.sendEmailChangeOTP(
+    await this.emailService.sendEmailChangeOTP(changeEmailDto.newEmail, token, user.fullName);
+
+    const approvalToken = this.generateRecoveryToken();
+    const approvalExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    await this.emailService.sendEmailChangeApproval(
+      user.email,
       changeEmailDto.newEmail,
-      token,
       user.fullName,
+      approvalToken,
+      token
     );
 
-    if (!otpSent) {
-      throw new HttpException(
-        'Failed to send verification email to new address. Please try again later.',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-
-    this.logger.log(
-      `Email change requested for user ${user.id}: ${user.email} -> ${changeEmailDto.newEmail}`
-    );
+    await this.userLogService.log(user.id, UserLogAction.EMAIL_CHANGE_REQUEST, {
+      metadata: {
+        newEmail: changeEmailDto.newEmail,
+        changeToken: token,
+        ip: requestInfo?.ip,
+        userAgent: requestInfo?.userAgent,
+      },
+      recoveryToken: approvalToken,
+      recoveryExpiresAt: approvalExpiresAt,
+    });
 
     return {
-      message: 'A verification code has been sent to your new email address. ' +
-        'A security alert has also been sent to your current email. ' +
-        'Please check both emails and enter the code to complete the email change.',
+      message: 'Verification code sent to new email. Approval link sent to your current email. You must approve from your current email before using the code.',
       newEmail: changeEmailDto.newEmail,
       oldEmail: user.email,
-      alertSent: alertSent,
-      otpSent: otpSent,
+      requiresApproval: true,
     };
   }
 
-  async confirmEmailChange(confirmEmailChangeDto: ConfirmEmailChangeDto) {
-    // ========== PHASE 2: CONFIRM OTP ==========
+  async approveEmailChange(approvalToken: string, changeToken: string): Promise<{ message: string }> {
+    const log = await this.userLogService.findEmailChangeLogByApprovalToken(approvalToken);
+    if (!log) {
+      throw new BadRequestException('Invalid or expired approval token');
+    }
 
-    // Find and consume token
-    const userToken = await this.tokenService.consumeTokenByValue(
-      confirmEmailChangeDto.token,
-      TokenType.EMAIL_CHANGE,
-    );
+    const userToken = await this.tokenService['userTokenRepository'].findOne({
+      where: {
+        token: changeToken,
+        type: TokenType.EMAIL_CHANGE,
+      },
+      relations: ['user'],
+    });
 
     if (!userToken) {
-      // Check if token exists but expired
-      const expiredToken = await this.tokenService.findExpiredTokenByValue(
-        confirmEmailChangeDto.token,
-        TokenType.EMAIL_CHANGE,
-      );
+      throw new BadRequestException('Invalid email change request');
+    }
 
-      if (expiredToken) {
-        throw new BadRequestException('Verification token has expired. Please request a new one.');
-      }
+    if (userToken.expiresAt < new Date()) {
+      throw new BadRequestException('This request has expired. Please create a new email change request.');
+    }
 
-      throw new BadRequestException('Invalid verification token');
+    if (userToken.usedAt !== null) {
+      throw new BadRequestException('This request has already been processed.');
     }
 
     const metadata = JSON.parse(userToken.metadata || '{}');
+    if (metadata.isApproved) {
+      throw new BadRequestException('This request has already been approved.');
+    }
+
+    metadata.isApproved = true;
+    metadata.approvedAt = new Date().toISOString();
+    metadata.approvedByIp = log.ipAddress;
+    userToken.metadata = JSON.stringify(metadata);
+    await this.tokenService['userTokenRepository'].save(userToken);
+
+    await this.userLogService.markRecoveryTokenUsed(log.id);
+
+    await this.emailService.sendEmailChangeApproved(
+      userToken.user.email,
+      userToken.user.fullName
+    );
+
+    await this.userLogService.log(userToken.userId, UserLogAction.EMAIL_CHANGE_APPROVED, {
+      metadata: {
+        changeToken: changeToken,
+        approvalToken: approvalToken,
+        approvedAt: new Date().toISOString(),
+      },
+    });
+
+    return {
+      message: 'Email change request approved. The user can now use the verification code to complete the email change.',
+    };
+  }
+  async confirmEmailChange(confirmEmailChangeDto: ConfirmEmailChangeDto) {
+    const userToken = await this.tokenService['userTokenRepository'].findOne({
+      where: {
+        token: confirmEmailChangeDto.token,
+        type: TokenType.EMAIL_CHANGE,
+      },
+      relations: ['user'],
+    });
+
+    if (!userToken) {
+      throw new BadRequestException('Invalid verification token');
+    }
+
+    if (userToken.expiresAt < new Date()) {
+      throw new BadRequestException('Verification token has expired. Please request a new one.');
+    }
+
+    if (userToken.usedAt !== null) {
+      throw new BadRequestException('This verification code has already been used.');
+    }
+
+    const metadata = JSON.parse(userToken.metadata || '{}');
+    if (!metadata.isApproved) {
+      throw new BadRequestException(
+        'This email change request has not been approved. ' +
+        'Please check your old email inbox and click the approval link first.'
+      );
+    }
+
     const newEmail = metadata.newEmail;
     const oldEmail = metadata.oldEmail || userToken.user.email;
 
@@ -332,7 +375,6 @@ export class AuthService {
       throw new BadRequestException('Email mismatch');
     }
 
-    // Check if new email already exists (double-check)
     const existingUser = await this.userRepository.findOne({
       where: { email: newEmail },
     });
@@ -341,39 +383,50 @@ export class AuthService {
       throw new ConflictException('Email already in use');
     }
 
-    // ========== PHASE 3: UPDATE DATABASE AND FORCE LOGOUT ==========
+    const user = userToken.user;
+    const finalOldEmail = user.email;
 
-    const oldUserEmail = userToken.user.email;
+    user.email = newEmail;
+    user.previousEmail = finalOldEmail;
+    user.lastSecurityChange = new Date();
+    await this.userRepository.save(user);
 
-    // Update user email
-    userToken.user.email = newEmail;
-    await this.userRepository.save(userToken.user);
+    await this.refreshTokenRepository.delete({ userId: user.id });
 
-    // IMPORTANT: Force logout all sessions - delete all refresh tokens
-    const deletedRefreshTokens = await this.refreshTokenRepository.delete({
-      userId: userToken.user.id
+    userToken.usedAt = new Date();
+    await this.tokenService['userTokenRepository'].save(userToken);
+
+    await this.emailService.sendEmailChangeCompletion(finalOldEmail, newEmail, user.fullName);
+
+    await this.userLogService.log(user.id, UserLogAction.EMAIL_CHANGE, {
+      oldValue: { email: finalOldEmail },
+      newValue: { email: newEmail },
+      metadata: {
+        changeToken: confirmEmailChangeDto.token,
+        approvedAt: metadata.approvedAt,
+      },
     });
 
-    this.logger.log(
-      `✅ Email changed for user ${userToken.user.id}: ${oldUserEmail} -> ${newEmail}. ` +
-      `Invalidated ${deletedRefreshTokens.affected || 0} refresh tokens.`
-    );
-
-    // ========== PHASE 4: SEND COMPLETION NOTIFICATIONS ==========
-
-    await this.emailService.sendEmailChangeCompletion(
-      oldEmail,
-      newEmail,
-      userToken.user.fullName,
-    );
-
     return {
-      message: '✅ Email changed successfully! All your sessions have been terminated for security. ' +
-        'Please log in with your new email address. ' +
-        'A confirmation email has been sent to both your old and new email addresses.',
+      message: 'Email changed successfully! All your sessions have been terminated for security. ' +
+        'Please log in with your new email address.',
       requiresRelogin: true,
       newEmail: newEmail,
     };
+  }
+
+  async performSensitiveAction(userId: number, actionName: string): Promise<{ allowed: boolean; message?: string }> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    try {
+      await this.securityService.checkSecurityGracePeriod(user, actionName);
+      return { allowed: true };
+    } catch (error) {
+      return { allowed: false, message: error.message };
+    }
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto, requestInfo: any) {
@@ -421,44 +474,168 @@ export class AuthService {
     };
   }
 
+  async secureMyAccount(
+    userId: number,
+    token: string,
+    requestInfo?: any
+  ): Promise<{ message: string }> {
+    let targetUserId = userId;
+
+    if (token) {
+      const log = await this.userLogRepository.findOne({
+        where: {
+          recoveryToken: token,
+          recoveryUsed: false,
+          recoveryExpiresAt: MoreThan(new Date()),
+        },
+        relations: ['user'],
+      });
+
+      if (!log) {
+        throw new BadRequestException('Invalid or expired security token');
+      }
+
+      targetUserId = log.userId;
+    }
+
+    if (!targetUserId) {
+      throw new BadRequestException('User ID or token is required');
+    }
+
+    const user = await this.userRepository.findOne({
+      where: { id: targetUserId },
+      relations: ['role'],
+    });
+
+    if (!user) {
+      throw new BadRequestException('User not found');
+    }
+
+    // 1. Revoke all pending email change tokens
+    await this.tokenService.revokeEmailChangeRequests(user.id);
+
+    // 2. Global logout - delete all refresh tokens
+    const deletedCount = await this.refreshTokenRepository.delete({ userId: user.id });
+    this.logger.log(`Global logout for user ${user.id}: deleted ${deletedCount.affected} refresh tokens`);
+
+    // 3. Save old state before changes
+    const wasSuspended = user.accessLevel === UserAccessLevel.SUSPENDED;
+    const wasActive = user.isActive;
+
+    // 4. Lockdown account
+    user.isActive = false;
+    user.accessLevel = UserAccessLevel.SUSPENDED;
+    user.previousEmail = user.email;
+    user.lastSecurityChange = new Date();
+
+    // 5. Invalidate current password - set to random string
+    const randomPassword = this.generateRandomPassword();
+    const hashedRandomPassword = await bcrypt.hash(randomPassword, 10);
+    user.password = hashedRandomPassword;
+
+    await this.userRepository.save(user);
+
+    // 6. Create reset password token
+    const resetToken = await this.tokenService.createResetPasswordToken(user.id, 60);
+    const resetLink = `${this.configService.get('FRONTEND_URL', 'http://localhost:3000')}/reset-password?token=${resetToken}&email=${user.email}`;
+
+    // 7. Send password reset email
+    await this.emailService.sendAccountRecoveryEmail(
+      user.email,
+      resetToken,
+      user.fullName,
+      resetLink,
+      requestInfo
+    );
+
+    await this.userLogService.log(user.id, UserLogAction.ACCOUNT_LOCK, {
+      metadata: {
+        reason: 'emergency_recovery',
+        ip: requestInfo?.ip,
+        userAgent: requestInfo?.userAgent,
+        deletedSessions: deletedCount.affected,
+        wasSuspended,
+        wasActive,
+      },
+      ipAddress: requestInfo?.ip,
+      userAgent: requestInfo?.userAgent,
+    });
+
+    if (token) {
+      await this.userLogRepository.update(
+        { recoveryToken: token },
+        { recoveryUsed: true }
+      );
+    }
+
+    this.logger.warn(`Account secured for user ${user.id}: ${user.email}. Password reset required.`);
+
+    return {
+      message: 'Your account has been secured!\n\n' +
+        '• All pending email changes cancelled\n' +
+        '• All sessions logged out\n' +
+        '• Account temporarily locked\n' +
+        '• Password reset link sent to your email\n\n' +
+        'Please check your email to set a new password and regain access.',
+    };
+  }
+
+  private generateRandomPassword(): string {
+    const length = 16;
+    const charset = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    let password = '';
+    for (let i = 0; i < length; i++) {
+      password += charset.charAt(Math.floor(Math.random() * charset.length));
+    }
+    return password;
+  }
+
+
   async resetPassword(resetPasswordDto: ResetPasswordDto) {
-    // Use TokenService to find and consume token
     const userToken = await this.tokenService.consumeTokenByValue(
       resetPasswordDto.token,
       TokenType.PASSWORD_RESET,
     );
 
     if (!userToken) {
-      // Check if token exists but expired
-      const expiredToken = await this.tokenService['userTokenRepository'].findOne({
-        where: {
-          token: resetPasswordDto.token,
-          type: TokenType.PASSWORD_RESET,
-          usedAt: IsNull(),
-          expiresAt: LessThan(new Date()),
-        },
-        relations: ['user'],
-      });
-
+      const expiredToken = await this.tokenService.findExpiredTokenByValue(
+        resetPasswordDto.token,
+        TokenType.PASSWORD_RESET,
+      );
       if (expiredToken) {
         throw new BadRequestException('Reset token has expired. Please request a new one.');
       }
-
       throw new BadRequestException('Invalid reset token');
     }
 
     const hashedPassword = await bcrypt.hash(resetPasswordDto.newPassword, 10);
 
-    userToken.user.password = hashedPassword;
-    await this.userRepository.save(userToken.user);
+    const user = userToken.user;
 
-    // Invalidate all refresh tokens for security
-    await this.refreshTokenRepository.delete({ userId: userToken.user.id });
+    const wasSuspended = user.accessLevel === UserAccessLevel.SUSPENDED;
+    const wasInactive = !user.isActive;
+
+    user.password = hashedPassword;
+    user.isActive = true;
+    user.accessLevel = UserAccessLevel.FULL;
+    user.lastSecurityChange = new Date();
+    await this.userRepository.save(user);
+
+    await this.refreshTokenRepository.delete({ userId: user.id });
+
+    await this.userLogService.log(user.id, UserLogAction.ACCOUNT_UNLOCK, {
+      metadata: {
+        reason: 'password_reset',
+        wasSuspended: wasSuspended,
+        wasInactive: wasInactive,
+      },
+    });
 
     return {
-      message: 'Password reset successfully. Please log in with your new password.',
+      message: 'Password reset successfully! Your account is now unlocked and you have FULL access.',
     };
   }
+
   async login(loginDto: LoginDto) {
     const user = await this.userRepository.findOne({
       where: { email: loginDto.email },
@@ -569,5 +746,10 @@ export class AuthService {
       accessToken,
       refreshToken: refreshTokenString,
     };
+  }
+
+  private generateRecoveryToken(): string {
+    return Math.random().toString(36).substring(2, 15) +
+      Math.random().toString(36).substring(2, 15);
   }
 }

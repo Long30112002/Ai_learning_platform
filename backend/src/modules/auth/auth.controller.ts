@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Req } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Req, Get } from '@nestjs/common';
 import { Request } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -119,5 +119,37 @@ export class AuthController {
     return {
       message: 'All pending email change requests have been cancelled. Your account is secure.',
     };
+  }
+
+  @Get('check-sensitive-action')
+  @UseGuards(JwtAuthGuard)
+  async checkSensitiveAction(
+    @CurrentUser() user: any,
+    @Body('action') actionName: string,
+  ) {
+    return this.authService.performSensitiveAction(user.id, actionName);
+  }
+  @Public()
+  @Post('secure-my-account')
+  @HttpCode(HttpStatus.OK)
+  async secureMyAccount(
+    @Body('userId') userId: number,
+    @Body('token') token: string,
+    @Req() req: Request,
+  ) {
+    return this.authService.secureMyAccount(userId, token, {
+      ip: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  }
+
+  @Public()
+  @Post('approve-email-change')
+  @HttpCode(HttpStatus.OK)
+  async approveEmailChange(
+    @Body('token') token: string,
+    @Body('changeToken') changeToken: string,
+  ) {
+    return this.authService.approveEmailChange(token, changeToken);
   }
 }

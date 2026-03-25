@@ -15,12 +15,12 @@
     .button {
       display: inline-block;
       padding: 12px 24px;
-      background-color: #dc3545;
-      color: white;
-      text-decoration: none;
+      margin: 10px;
       border-radius: 4px;
-      margin: 20px 0;
+      text-decoration: none;
     }
+    .button-cancel { background-color: #dc3545; color: white; }
+    .button-secure { background-color: #28a745; color: white; }
     .warning { color: #dc3545; font-weight: bold; }
     .footer { font-size: 12px; color: #777; margin-top: 30px; }
   </style>
@@ -32,20 +32,18 @@
     
     <div class="alert-box">
       <strong>🚨 Important Security Notice</strong><br><br>
-      A request has been made to change the email address associated with your <strong>{{appName}}</strong> account.
+      A request has been made to change your email to: <strong>{{newEmail}}</strong>
     </div>
     
-    <p><strong>📧 New email address:</strong> {{newEmail}}</p>
     <p><strong>⏰ Request time:</strong> {{requestTime}}</p>
     
     <p class="warning">⚠️ <strong>If you did NOT make this request, your account may be compromised!</strong></p>
     
-    <p>Click the button below to secure your account immediately:</p>
-    <a href="{{securityUrl}}" class="button">🔒 Secure My Account</a>
+    <p><strong>Choose an action:</strong></p>
+    <a href="{{revokeUrl}}" class="button button-cancel">❌ Cancel Request</a>
+    <a href="{{secureUrl}}" class="button button-secure">🔒 Secure My Account</a>
     
     <p>If you did make this request, please ignore this email and proceed with the verification code sent to your new email address.</p>
-    
-    <p>For any questions, please contact our support team at <a href="{{supportUrl}}">{{supportUrl}}</a>.</p>
     
     <div class="footer">
       <p>Best regards,<br>{{appName}} Security Team</p>

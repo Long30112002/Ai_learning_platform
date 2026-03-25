@@ -9,7 +9,7 @@ export class EmailService {
   constructor(
     private mailerService: MailerService,
     private configService: ConfigService,
-  ) {}
+  ) { }
 
   async sendVerificationOTP(email: string, otp: string, fullName?: string): Promise<boolean> {
     const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
@@ -86,7 +86,8 @@ export class EmailService {
   async sendEmailChangeAlert(oldEmail: string, newEmail: string, fullName?: string): Promise<boolean> {
     const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
     const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
-    const securityUrl = `${frontendUrl}/security/email-change-revoke`;
+    const revokeUrl = `${frontendUrl}/api/v1/auth/revoke-email-change`;
+    const secureUrl = `${frontendUrl}/api/v1/auth/secure-my-account`;
 
     try {
       await this.mailerService.sendMail({
@@ -97,22 +98,76 @@ export class EmailService {
           name: fullName || oldEmail.split('@')[0],
           newEmail,
           appName,
-          securityUrl,
-          supportUrl: this.configService.get('SUPPORT_URL', 'mailto:support@example.com'),
+          revokeUrl,
+          secureUrl,
           requestTime: new Date().toLocaleString('vi-VN'),
         },
       });
-      this.logger.log(`Email change alert sent to ${oldEmail} for new email ${newEmail}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send email change alert to ${oldEmail}:`, error);
+      this.logger.error(`Failed to send email change alert:`, error);
+      return false;
+    }
+  }
+
+  async sendEmailChangeApproval(
+    oldEmail: string,
+    newEmail: string,
+    fullName: string | undefined,
+    approvalToken: string,
+    changeToken: string
+  ): Promise<boolean> {
+    const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
+    const frontendUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000');
+    const approveUrl = `${frontendUrl}/api/v1/auth/approve-email-change?token=${approvalToken}&changeToken=${changeToken}`;
+    const revokeUrl = `${frontendUrl}/api/v1/auth/secure-my-account?token=${approvalToken}`;
+
+    try {
+      await this.mailerService.sendMail({
+        to: oldEmail,
+        subject: `Email Change Request - Please Approve - ${appName}`,
+        template: './email-change-approval',
+        context: {
+          name: fullName || oldEmail.split('@')[0],
+          newEmail,
+          appName,
+          approveUrl,
+          revokeUrl,
+          requestTime: new Date().toLocaleString('vi-VN'),
+        },
+      });
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send email change approval:`, error);
+      return false;
+    }
+  }
+
+  async sendEmailChangeApproved(email: string, fullName?: string): Promise<boolean> {
+    const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
+    const loginUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000') + '/login';
+
+    try {
+      await this.mailerService.sendMail({
+        to: email,
+        subject: `Email Change Approved - ${appName}`,
+        template: './email-change-approved',
+        context: {
+          name: fullName || email.split('@')[0],
+          loginUrl,
+          appName,
+        },
+      });
+      this.logger.log(`Email change approval confirmation sent to ${email}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send email change approval confirmation:`, error);
       return false;
     }
   }
 
   async sendEmailChangeOTP(newEmail: string, otp: string, fullName?: string): Promise<boolean> {
     const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
-
     try {
       await this.mailerService.sendMail({
         to: newEmail,
@@ -125,10 +180,9 @@ export class EmailService {
           expiryMinutes: 15,
         },
       });
-      this.logger.log(`Email change OTP sent to new email: ${newEmail}`);
       return true;
     } catch (error) {
-      this.logger.error(`Failed to send email change OTP to ${newEmail}:`, error);
+      this.logger.error(`Failed to send email change OTP:`, error);
       return false;
     }
   }
@@ -136,6 +190,7 @@ export class EmailService {
   async sendEmailChangeCompleteNew(newEmail: string, fullName?: string): Promise<boolean> {
     const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
     const loginUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000') + '/login';
+    const supportUrl = this.configService.get('SUPPORT_URL', 'mailto:support@example.com');
 
     try {
       await this.mailerService.sendMail({
@@ -147,7 +202,7 @@ export class EmailService {
           email: newEmail,
           loginUrl,
           appName,
-          supportUrl: this.configService.get('SUPPORT_URL', 'mailto:support@example.com'),
+          supportUrl, // THÊM DÒNG NÀY
         },
       });
       this.logger.log(`Email change completion sent to new email: ${newEmail}`);
@@ -161,6 +216,7 @@ export class EmailService {
   async sendEmailChangeCompleteOld(oldEmail: string, newEmail: string, fullName?: string): Promise<boolean> {
     const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
     const loginUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000') + '/login';
+    const supportUrl = this.configService.get('SUPPORT_URL', 'mailto:support@example.com');
 
     try {
       await this.mailerService.sendMail({
@@ -173,7 +229,7 @@ export class EmailService {
           newEmail,
           loginUrl,
           appName,
-          supportUrl: this.configService.get('SUPPORT_URL', 'mailto:support@example.com'),
+          supportUrl, // THÊM DÒNG NÀY
         },
       });
       this.logger.log(`Email change completion sent to old email: ${oldEmail}`);
@@ -183,9 +239,72 @@ export class EmailService {
       return false;
     }
   }
-
   async sendEmailChangeCompletion(oldEmail: string, newEmail: string, fullName?: string): Promise<void> {
-    await this.sendEmailChangeCompleteNew(newEmail, fullName);
-    await this.sendEmailChangeCompleteOld(oldEmail, newEmail, fullName);
+    const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
+    const loginUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000') + '/login';
+    const supportUrl = this.configService.get('SUPPORT_URL', 'mailto:support@example.com');
+
+    // Send to new email
+    await this.mailerService.sendMail({
+      to: newEmail,
+      subject: `Email Changed Successfully - ${appName}`,
+      template: './email-change-complete-new',
+      context: {
+        name: fullName || newEmail.split('@')[0],
+        email: newEmail,
+        loginUrl,
+        appName,
+        supportUrl,
+      },
+    });
+
+    // Send to old email
+    await this.mailerService.sendMail({
+      to: oldEmail,
+      subject: `Email Address Changed - ${appName}`,
+      template: './email-change-complete-old',
+      context: {
+        name: fullName || oldEmail.split('@')[0],
+        oldEmail,
+        newEmail,
+        loginUrl,
+        appName,
+        supportUrl,
+      },
+    });
+  }
+
+  async sendAccountRecoveryEmail(
+    email: string,
+    token: string,
+    fullName?: string,
+    resetLink?: string,
+    requestInfo?: any
+  ): Promise<boolean> {
+    const appName = this.configService.get('APP_NAME', 'AI Learning Platform');
+    const loginUrl = this.configService.get('FRONTEND_URL', 'http://localhost:3000') + '/login';
+
+    try {
+      await this.mailerService.sendMail({
+        to: email,
+        subject: `Account Recovery - ${appName}`,
+        template: './account-recovery',
+        context: {
+          name: fullName || email.split('@')[0],
+          resetLink: resetLink || `${this.configService.get('FRONTEND_URL')}/reset-password?token=${token}`,
+          token,
+          loginUrl,
+          appName,
+          requestTime: new Date().toLocaleString('vi-VN'),
+          deviceInfo: requestInfo?.userAgent || 'Unknown device',
+          ipAddress: requestInfo?.ip || 'Unknown IP',
+        },
+      });
+      this.logger.log(`Account recovery email sent to ${email}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send account recovery email to ${email}:`, error);
+      return false;
+    }
   }
 }

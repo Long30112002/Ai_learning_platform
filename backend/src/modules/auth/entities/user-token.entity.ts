@@ -23,6 +23,9 @@ export class UserToken extends BaseEntity {
   @Column({ name: 'metadata', type: 'nvarchar', nullable: true })
   metadata: string | null;
 
+  @Column({ name: 'is_approved', type: 'bit', default: false })
+  isApproved: boolean;
+
   @ManyToOne(() => User)
   @JoinColumn({ name: 'user_id' })
   user: User;

@@ -390,6 +390,26 @@ export class TokenService {
     }
   }
 
+  async createResetPasswordToken(userId: number, expiryMinutes: number = 15): Promise<string> {
+    const token = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + expiryMinutes * 60 * 1000);
+
+    const resetToken = this.userTokenRepository.create({
+      userId,
+      token,
+      type: TokenType.PASSWORD_RESET,
+      expiresAt,
+      usedAt: null,
+      metadata: JSON.stringify({
+        purpose: 'account_recovery',
+        created_at: new Date().toISOString(),
+      }),
+    });
+
+    await this.userTokenRepository.save(resetToken);
+    return token;
+  }
+
   async revokeEmailChangeRequests(userId: number): Promise<void> {
     const pendingTokens = await this.userTokenRepository.find({
       where: {

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; font-family: Arial; }
+    .alert-box { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
+    .button { display: inline-block; padding: 12px 24px; margin: 10px; border-radius: 4px; text-decoration: none; }
+    .button-approve { background: #28a745; color: white; }
+    .button-revoke { background: #dc3545; color: white; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>⚠️ Email Change Request</h2>
+    <p>Hi <strong>{{name}}</strong>,</p>
+    <div class="alert-box">
+      <strong>Someone requested to change your email to:</strong><br>
+      {{newEmail}}
+    </div>
+    <p><strong>⏰ Request time:</strong> {{requestTime}}</p>
+    <p><strong>If this was YOU:</strong></p>
+    <a href="{{approveUrl}}" class="button button-approve">✅ Approve & Allow Change</a>
+    <p><strong>If this was NOT you:</strong></p>
+    <a href="{{revokeUrl}}" class="button button-revoke">🔒 Secure Account & Cancel</a>
+    <p>Best regards,<br>{{appName}} Team</p>
+  </div>
+</body>
+</html>
